@@ -1,0 +1,87 @@
+name: Deploy Cyber Carp preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_sha:
+        description: Immutable commit SHA to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cyber-carp-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DEPLOY_HOST: ${{ secrets.CYBER_CARP_VPS_HOST }}
+      DEPLOY_USER: ${{ secrets.CYBER_CARP_VPS_USER }}
+      DEPLOY_PORT: ${{ secrets.CYBER_CARP_VPS_PORT }}
+      DEPLOY_PATH: ${{ secrets.CYBER_CARP_VPS_PATH }}
+      DEPLOY_SHA: ${{ inputs.deploy_sha }}
+      PUBLIC_URL: https://cyber-carp.com
+    steps:
+      - name: Check out immutable source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Validate deployment configuration
+        env:
+          SSH_KEY: ${{ secrets.CYBER_CARP_VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.CYBER_CARP_VPS_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_PORT"
+          test -n "$DEPLOY_PATH"
+          test -n "$DEPLOY_SHA"
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+          case "$DEPLOY_PATH" in
+            /srv/*/current|/var/www/*/current) ;;
+            *) echo "CYBER_CARP_VPS_PATH must be a current symlink below /srv or /var/www"; exit 1 ;;
+          esac
+
+      - name: Build static release archive
+        run: |
+          set -eu
+          mkdir -p /tmp/cyber-carp-release
+          cp index.html styles.css app.js /tmp/cyber-carp-release/
+          printf '{"commit":"%s","deployedAt":"%s"}\n' "$DEPLOY_SHA" "$(date -u +%FT%TZ)" > /tmp/cyber-carp-release/site-release.json
+          tar -C /tmp/cyber-carp-release -czf /tmp/cyber-carp.tgz .
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.CYBER_CARP_VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.CYBER_CARP_VPS_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/known_hosts ~/.ssh/deploy_key
+
+      - name: Upload and activate release
+        run: |
+          set -eu
+          release_id="${GITHUB_RUN_ID}-$(git rev-parse --short HEAD)"
+          deploy_root="${DEPLOY_PATH%/current}"
+          release_path="$deploy_root/releases/$release_id"
+          scp -P "$DEPLOY_PORT" -i ~/.ssh/deploy_key /tmp/cyber-carp.tgz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/cyber-carp.tgz"
+          ssh -p "$DEPLOY_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "set -eu; test -d '$deploy_root'; install -d -m 755 '$release_path'; tar -xzf /tmp/cyber-carp.tgz -C '$release_path'; find '$release_path' -type d -exec chmod 755 {} +; find '$release_path' -type f -exec chmod 644 {} +; ln -sfn '$release_path' '$DEPLOY_PATH'; rm -f /tmp/cyber-carp.tgz"
+
+      - name: Verify release through public edge
+        run: |
+          set -eu
+          payload="$(curl --fail --silent --show-error --retry 5 --retry-delay 3 "$PUBLIC_URL/site-release.json")"
+          printf '%s' "$payload" | python3 -c 'import json,sys; p=json.load(sys.stdin); expected=sys.argv[1]; actual=p.get("commit"); assert actual == expected, f"expected {expected}, got {actual}"' "$DEPLOY_SHA"
