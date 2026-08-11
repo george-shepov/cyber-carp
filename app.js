@@ -14,7 +14,8 @@ document.querySelectorAll('.filter').forEach((button) => button.addEventListener
   button.classList.add('active');
   const filter = button.dataset.filter;
   document.querySelectorAll('[data-project]').forEach((card) => {
-    card.hidden = filter !== 'all' && card.dataset.category !== filter;
+    const categories = card.dataset.category.split(' ');
+    card.hidden = filter !== 'all' && !categories.includes(filter);
   });
 }));
 
@@ -32,13 +33,11 @@ document.querySelectorAll('.inline-estimate').forEach((button) => button.addEven
   document.querySelector('[name="name"]')?.focus({ preventScroll: true });
 }));
 
-const dialog = document.querySelector('#project-dialog');
-document.querySelectorAll('[data-project-open]').forEach((button) => button.addEventListener('click', () => {
-  document.querySelector('#dialog-title').textContent = button.dataset.projectOpen;
-  dialog.showModal();
+document.querySelectorAll('.project-card video').forEach((video) => video.addEventListener('play', () => {
+  document.querySelectorAll('.project-card video').forEach((other) => {
+    if (other !== video) other.pause();
+  });
 }));
-document.querySelector('[data-dialog-close]')?.addEventListener('click', () => dialog.close());
-dialog?.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 
 const leadForm = document.querySelector('#lead-form');
 const maxUploadBytes = 25 * 1024 * 1024;
@@ -97,7 +96,3 @@ document.querySelector('#chat-form')?.addEventListener('submit', (event) => {
 });
 
 // Production hook: replace this demo handler with POST /api/leads and signed upload flow.
-document.querySelector('.media-play')?.addEventListener('click', (event) => {
-  event.currentTarget.setAttribute('aria-label', 'Hero footage placeholder: add authentic video before launch');
-  event.currentTarget.textContent = '✓';
-});

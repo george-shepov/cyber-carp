@@ -56,6 +56,7 @@ jobs:
           set -eu
           mkdir -p /tmp/cyber-carp-release
           cp index.html styles.css app.js /tmp/cyber-carp-release/
+          cp -R media /tmp/cyber-carp-release/
           printf '{"commit":"%s","deployedAt":"%s"}\n' "$DEPLOY_SHA" "$(date -u +%FT%TZ)" > /tmp/cyber-carp-release/site-release.json
           tar -C /tmp/cyber-carp-release -czf /tmp/cyber-carp.tgz .
 
